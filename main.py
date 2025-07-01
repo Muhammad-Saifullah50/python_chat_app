@@ -44,6 +44,49 @@ def get_gemini_response_stream(messages):
     return chat.send_message(messages[-1]["content"], stream=True)
 
 
+def extract_text_from_file(uploaded_file):
+    import io
+    import PyPDF2
+    from docx import Document
+    if uploaded_file is None:
+        return None
+    if uploaded_file.type == "application/pdf":
+        reader = PyPDF2.PdfReader(uploaded_file)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() or ""
+        return text
+    elif uploaded_file.type in ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/msword"]:
+        doc = Document(uploaded_file)
+        return "\n".join([p.text for p in doc.paragraphs])
+    else:
+        # Assume text file
+        return uploaded_file.read().decode("utf-8")
+
+
+def extract_text_from_files(uploaded_files):
+    import io
+    import PyPDF2
+    from docx import Document
+    all_texts = []
+    for uploaded_file in uploaded_files:
+        if uploaded_file.type == "application/pdf":
+            reader = PyPDF2.PdfReader(uploaded_file)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() or ""
+            all_texts.append(f"--- File: {uploaded_file.name} ---\n{text}")
+        elif uploaded_file.type in ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/msword"]:
+            doc = Document(uploaded_file)
+            text = "\n".join([p.text for p in doc.paragraphs])
+            all_texts.append(f"--- File: {uploaded_file.name} ---\n{text}")
+        else:
+            # Assume text file
+            text = uploaded_file.read().decode("utf-8")
+            all_texts.append(f"--- File: {uploaded_file.name} ---\n{text}")
+    return "\n\n".join(all_texts)
+
+
 def main():
     st.title("Python Chat App")
 
@@ -51,15 +94,39 @@ def main():
     for msg in st.session_state["messages"]:
         if msg["role"] == "user":
             with st.chat_message("user"):
-                st.markdown(msg["content"])
+                # Only show the user's actual query, not the file content
+                if "User Query:" in msg["content"]:
+                    user_display = msg["content"].split("User Query:", 1)[-1].strip()
+                else:
+                    user_display = msg["content"]
+                st.markdown(user_display)
         else:
             with st.chat_message("assistant"):
                 st.markdown(msg["content"])
 
-    # Use st.chat_input for user input
-    user_input = st.chat_input("Type your message...")
+    # Place multi-file uploader just above the chat input
+    uploaded_files = st.file_uploader("Upload files", type=["pdf", "txt", "docx"], label_visibility="visible", key="file_uploader", accept_multiple_files=True)
+    if uploaded_files:
+        file_text = extract_text_from_files(uploaded_files)
+        st.session_state["file_text"] = file_text
+        st.session_state["last_uploaded_filenames"] = [f.name for f in uploaded_files]
+    elif "file_text" not in st.session_state:
+        st.session_state["file_text"] = None
+
+    # Always show foldable file content if files are uploaded
+    if st.session_state.get("file_text"):
+        with st.expander("Show/hide uploaded file contents", expanded=False):
+            st.code(st.session_state["file_text"][:4000], language="markdown")
+
+    # Place chat input at the bottom
+    user_input = st.chat_input("Type your message or ask about your documents...")
     if user_input:
-        st.session_state["messages"].append({"role": "user", "content": user_input})
+        # If files uploaded, prepend their content to the user message for context (but only send to Gemini, not display)
+        if st.session_state["file_text"]:
+            user_message = f"Document Content:\n{st.session_state['file_text'][:4000]}\n\nUser Query: {user_input}"
+        else:
+            user_message = user_input
+        st.session_state["messages"].append({"role": "user", "content": user_message})
         with st.chat_message("user"):
             st.markdown(user_input)
         with st.chat_message("assistant"):
@@ -76,7 +143,7 @@ def main():
                                 full_response += char
                                 # Add a blinking cursor and animated bar
                                 anim = animation_chars[anim_idx % len(animation_chars)]
-                                response_placeholder.markdown(full_response + f'<span style="color:#fcba03;font-weight:bold;">|{anim}</span>', unsafe_allow_html=True)
+                                response_placeholder.markdown(full_response + f'<span style=\"color:#fcba03;font-weight:bold;\">|{anim}</span>', unsafe_allow_html=True)
                                 anim_idx += 1
                                 time.sleep(0.025)  # Smooth animation
                     # Finalize response without animation
