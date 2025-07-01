@@ -2,6 +2,7 @@ import streamlit as st
 import google.generativeai as genai
 import os
 from dotenv import load_dotenv
+import time
 
 # Load environment variables
 load_dotenv(".env.local")
@@ -22,10 +23,25 @@ def get_gemini_response(messages):
             chat_history.append({"role": "user", "parts": [msg["content"]]})
         else:
             chat_history.append({"role": "model", "parts": [msg["content"]]})
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    model = genai.GenerativeModel(model_name="gemini-2.0-flash", generation_config=genai.GenerationConfig())
+
     chat = model.start_chat(history=chat_history)
     response = chat.send_message(messages[-1]["content"])
     return response.text
+
+
+def get_gemini_response_stream(messages):
+    # Prepare messages for Gemini API
+    chat_history = []
+    for msg in messages:
+        if msg["role"] == "user":
+            chat_history.append({"role": "user", "parts": [msg["content"]]})
+        else:
+            chat_history.append({"role": "model", "parts": [msg["content"]]})
+    model = genai.GenerativeModel(model_name="gemini-2.0-flash", generation_config=genai.GenerationConfig())
+    chat = model.start_chat(history=chat_history)
+    # Use stream=True to get a generator of chunks
+    return chat.send_message(messages[-1]["content"], stream=True)
 
 
 def main():
@@ -49,16 +65,26 @@ def main():
         with st.chat_message("assistant"):
             with st.spinner("Gemini is typing..."):
                 try:
-                    gemini_response = get_gemini_response(st.session_state["messages"])
-                    st.session_state["messages"].append(
-                        {"role": "model", "content": gemini_response}
-                    )
-                    st.markdown(gemini_response)
+                    response_stream = get_gemini_response_stream(st.session_state["messages"])
+                    full_response = ""
+                    response_placeholder = st.empty()
+                    animation_chars = [" ░", " ▒", " ▓", " █", " ▓", " ▒", " ░"]
+                    anim_idx = 0
+                    for chunk in response_stream:
+                        if hasattr(chunk, 'text'):
+                            for char in chunk.text:
+                                full_response += char
+                                # Add a blinking cursor and animated bar
+                                anim = animation_chars[anim_idx % len(animation_chars)]
+                                response_placeholder.markdown(full_response + f'<span style="color:#fcba03;font-weight:bold;">|{anim}</span>', unsafe_allow_html=True)
+                                anim_idx += 1
+                                time.sleep(0.025)  # Smooth animation
+                    # Finalize response without animation
+                    response_placeholder.markdown(full_response)
+                    st.session_state["messages"].append({"role": "model", "content": full_response})
                 except Exception as e:
                     error_msg = f"Error: {e}"
-                    st.session_state["messages"].append(
-                        {"role": "model", "content": error_msg}
-                    )
+                    st.session_state["messages"].append({"role": "model", "content": error_msg})
                     st.markdown(error_msg)
         st.rerun()
 
