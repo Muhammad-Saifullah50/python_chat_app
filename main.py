@@ -29,7 +29,7 @@ def get_gemini_response(messages):
 
 
 def main():
-    st.title("Python Chat App (Gemini)")
+    st.title("Python Chat App")
 
     # Display chat messages using st.chat_message
     for msg in st.session_state["messages"]:
